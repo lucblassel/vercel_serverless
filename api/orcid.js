@@ -52,8 +52,14 @@ const tags = [
   ["a", ["ext-link"]],
 ];
 
+function log(message) {
+  let ts = new Date(Date.now())
+  console.log(`[${ts.toLocaleString("en-UK")}] ${message}`)
+}
+
 async function getJournalTitle(orcid, journalID) {
   var ORCIDLink = `https://pub.orcid.org/v2.0/${orcid}/work/${journalID}`;
+  log(`Get journal info from ${ORCIDLink}`)
   const response = await fetch(ORCIDLink, {
     headers: { Accept: "application/orcid+json" },
   });
@@ -126,8 +132,9 @@ function convertJATS(jats) {
 }
 
 async function getMetadata(doi) {
-  console.log(`http://api.crossref.org/works/${doi}`)
-  const response = await fetch(`http://api.crossref.org/works/${doi}`, {
+  let url = `http://api.crossref.org/works/${doi}`
+  log(`fetching metadata from ${url}`)
+  const response = await fetch(url, {
     headers: { Accept: "application/json" },
   });
   const data = await response.json();
@@ -148,6 +155,9 @@ async function getMetadata(doi) {
 module.exports = async (req, res) => {
   const { orcid = "0000-0002-6598-7673" } = req.query;
   let url = `https://pub.orcid.org/v2.0/${orcid}/works`;
+
+  log(`fetching from: ${url}`)
+
   const response = await fetch(url, {
     headers: { Accept: "application/orcid+json" },
   });
@@ -156,6 +166,7 @@ module.exports = async (req, res) => {
 
   let records = [];
   for (let item of data["group"]) {
+    log("parsing record")
     let record = item["work-summary"][0];
     let journal = await getJournalTitle(orcid, record["put-code"]);
     let title = getTitle(record);
@@ -166,7 +177,9 @@ module.exports = async (req, res) => {
       ...records,
       { title: title, journal: journal, doi: doi, ...meta, source: source },
     ];
+    log("finished parsing record.\n")
   }
 
   res.status(200).json(records);
+  log("done processing request.\n")
 };
