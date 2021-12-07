@@ -57,15 +57,34 @@ function log(message) {
   console.log(`[${ts.toLocaleString("en-UK")}] ${message}`)
 }
 
-async function getJournalTitle(orcid, journalID) {
+function getAuthors(contributors) {
+  return contributors.filter((el) => {
+    return el["contributor-attributes"]["contributor-role"] == "AUTHOR"
+  })
+  .map((contr) => {
+    let name = contr["credit-name"].value.split(" ")
+    return {
+      first: name[0],
+      last: name[name.length - 1],
+      url: contr["contributor-orcid"],
+    }
+  })
+}
+
+async function getJournalInfo(orcid, journalID) {
+
   var ORCIDLink = `https://pub.orcid.org/v2.0/${orcid}/work/${journalID}`;
   log(`Get journal info from ${ORCIDLink}`)
   const response = await fetch(ORCIDLink, {
     headers: { Accept: "application/orcid+json" },
   });
+
   const data = await response.json();
-  if (data["journal-title"] != null) return data["journal-title"]["value"];
-  return "";
+
+  let journal = data["journal-title"]["value"] || "no title";
+  let authors = getAuthors(data["contributors"]["contributor"])
+
+  return {journal:journal, authors:authors}
 }
 
 function selectRecord(records) {
@@ -137,23 +156,30 @@ async function getMetadata(doi) {
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
   });
-  const data = await response.json();
 
+  if (!response.ok) {
+    return null;
+  } else {
+    const data = await response.json();
+  
+    let authors = data["message"]["author"]
+      .map((author) => parseAuthor(author))
+      .filter((el) => {
+        return el != null;
+      });
+  
+    let date = makeDate(data["message"]["published"]["date-parts"][0]);
+    let abstract = convertJATS(data["message"]["abstract"]);
+  
+    return { authors: authors, date: date, abstract: abstract };
+  }
 
-  let authors = data["message"]["author"]
-    .map((author) => parseAuthor(author))
-    .filter((el) => {
-      return el != null;
-    });
-
-  let date = makeDate(data["message"]["published"]["date-parts"][0]);
-  let abstract = convertJATS(data["message"]["abstract"]);
-
-  return { authors: authors, date: date, abstract: abstract };
 }
 
 module.exports = async (req, res) => {
   const { orcid = "0000-0002-6598-7673" } = req.query;
+  const { crossref = false } = req.query;
+
   let url = `https://pub.orcid.org/v2.0/${orcid}/works`;
 
   log(`fetching from: ${url}`)
@@ -168,14 +194,17 @@ module.exports = async (req, res) => {
   for (let item of data["group"]) {
     log("parsing record")
     let record = item["work-summary"][0];
-    let journal = await getJournalTitle(orcid, record["put-code"]);
+    let info = await getJournalInfo(orcid, record["put-code"])
     let title = getTitle(record);
     let doi = getDOI(record);
-    let meta = await getMetadata(doi);
+    if (crossref) {
+      let meta = await getMetadata(doi);
+      info = {...info, ...meta}
+    }
     let source = record["source"]["source-name"]["value"];
     records = [
       ...records,
-      { title: title, journal: journal, doi: doi, ...meta, source: source },
+      { title: title, doi: doi, ...info, source: source },
     ];
     log("finished parsing record.\n")
   }
