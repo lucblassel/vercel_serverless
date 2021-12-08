@@ -53,28 +53,28 @@ const tags = [
 ];
 
 function log(message) {
-  let ts = new Date(Date.now())
-  console.log(`[${ts.toLocaleString("en-UK")}] ${message}`)
+  let ts = new Date(Date.now());
+  console.log(`[${ts.toLocaleString("en-UK")}] ${message}`);
 }
 
 function getAuthors(contributors) {
-  return contributors.filter((el) => {
-    return el["contributor-attributes"]["contributor-role"] == "AUTHOR"
-  })
-  .map((contr) => {
-    let name = contr["credit-name"].value.split(" ")
-    return {
-      first: name[0],
-      last: name[name.length - 1],
-      url: contr["contributor-orcid"],
-    }
-  })
+  return contributors
+    .filter((el) => {
+      return el["contributor-attributes"]["contributor-role"] == "AUTHOR";
+    })
+    .map((contr) => {
+      let name = contr["credit-name"].value.split(" ");
+      return {
+        first: name[0],
+        last: name[name.length - 1],
+        url: contr["contributor-orcid"],
+      };
+    });
 }
 
 async function getJournalInfo(orcid, journalID) {
-
   var ORCIDLink = `https://pub.orcid.org/v2.0/${orcid}/work/${journalID}`;
-  log(`Get journal info from ${ORCIDLink}`)
+  log(`Get journal info from ${ORCIDLink}`);
   const response = await fetch(ORCIDLink, {
     headers: { Accept: "application/orcid+json" },
   });
@@ -82,20 +82,9 @@ async function getJournalInfo(orcid, journalID) {
   const data = await response.json();
 
   let journal = data["journal-title"]["value"] || "no title";
-  let authors = getAuthors(data["contributors"]["contributor"])
+  let authors = getAuthors(data["contributors"]["contributor"]);
 
-  return {journal:journal, authors:authors}
-}
-
-function selectRecord(records) {
-  if (records.length == 1) return records[0];
-  let rec = records[0];
-  for (let record of records) {
-    let source = record["source"]["source-name"]["value"];
-    if (source == "Luc Blassel") rec = record;
-    if (source == "Crossref Metadata Search") return record;
-  }
-  return rec;
+  return { journal: journal, authors: authors };
 }
 
 function getTitle(record) {
@@ -126,10 +115,9 @@ function makeDate(parts) {
   let month = `${parts[1]}`.padStart(2, "0");
   let day = `${parts[2]}`.padStart(2, "0");
   if (day == "undefined") {
-    day = "01"
+    day = "01";
   }
   return `${parts[0]}-${month}-${day}`;
-  
 }
 
 function convertJATS(jats) {
@@ -150,39 +138,46 @@ function convertJATS(jats) {
   return t;
 }
 
+function getOrcidDate(record) {
+  let data = record["publication-date"];
+  let year = data["year"]["value"];
+  let month = data["month"]["value"];
+  let day = data["day"] ? data["day"]["value"] : undefined;
+
+  return makeDate([year, month, day]);
+}
+
 async function getMetadata(doi) {
-  let url = `http://api.crossref.org/works/${doi}`
-  log(`fetching metadata from ${url}`)
+  let url = `http://api.crossref.org/works/${doi}`;
+  log(`fetching metadata from ${url}`);
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
   });
 
   if (!response.ok) {
-    return null;
+    return {};
   } else {
     const data = await response.json();
-  
+
     let authors = data["message"]["author"]
       .map((author) => parseAuthor(author))
       .filter((el) => {
         return el != null;
       });
-  
+
     let date = makeDate(data["message"]["published"]["date-parts"][0]);
     let abstract = convertJATS(data["message"]["abstract"]);
-  
+
     return { authors: authors, date: date, abstract: abstract };
   }
-
 }
 
 module.exports = async (req, res) => {
   const { orcid = "0000-0002-6598-7673" } = req.query;
-  const { crossref = false } = req.query;
 
   let url = `https://pub.orcid.org/v2.0/${orcid}/works`;
 
-  log(`fetching from: ${url}`)
+  log(`fetching from: ${url}`);
 
   const response = await fetch(url, {
     headers: { Accept: "application/orcid+json" },
@@ -192,23 +187,20 @@ module.exports = async (req, res) => {
 
   let records = [];
   for (let item of data["group"]) {
-    log("parsing record")
+    log("parsing record");
     let record = item["work-summary"][0];
-    let info = await getJournalInfo(orcid, record["put-code"])
+    log(record);
+    let info = await getJournalInfo(orcid, record["put-code"]);
+    info["date"] = getOrcidDate(record);
     let title = getTitle(record);
     let doi = getDOI(record);
-    if (crossref) {
-      let meta = await getMetadata(doi);
-      info = {...info, ...meta}
-    }
+    let meta = await getMetadata(doi);
+    info = { ...info, ...meta };
     let source = record["source"]["source-name"]["value"];
-    records = [
-      ...records,
-      { title: title, doi: doi, ...info, source: source },
-    ];
-    log("finished parsing record.\n")
+    records = [...records, { title: title, doi: doi, ...info, source: source }];
+    log("finished parsing record.\n");
   }
 
   res.status(200).json(records);
-  log("done processing request.\n")
+  log("done processing request.\n");
 };
